@@ -72,7 +72,9 @@ func NewServer(cfg Config) (*Server, error) {
 		}),
 	}
 
-	s.recordsCache = newDNSCache(cfg.CacheCap)
+	if cfg.CacheCap > 0 {
+		s.recordsCache = newDNSCache(cfg.CacheCap)
+	}
 
 	s.resolver = newSpoofingProofResolver(fastUpstreamProvider, cleanUpstreamProvider, cfg.CacheCap)
 
@@ -142,9 +144,14 @@ func (s *Server) handle(w dns.ResponseWriter, req *dns.Msg, net string) {
 // and returns the result and which upstream is used. It updates the local cache
 // if necessary.
 func (s *Server) lookup(req *dns.Msg, net string) (*dns.Msg, string) {
-	// 1. lookup the cache first
-	res, upd := s.recordsCache.lookup(req.Question[0], req.RecursionDesired, net)
+	// 1. lookup the cache first (if cache is enabled)
 	var upstream string
+	var res *dns.Msg
+	var upd bool
+
+	if s.recordsCache != nil {
+		res, upd = s.recordsCache.lookup(req.Question[0], req.RecursionDesired, net)
+	}
 
 	if res != nil {
 		if upd {
@@ -164,7 +171,7 @@ func (s *Server) lookup(req *dns.Msg, net string) (*dns.Msg, string) {
 		upstream = "cache"
 	} else {
 		res, upstream = s.resolver.resolve(req.Question[0], req.RecursionDesired, net)
-		if res.Rcode == dns.RcodeSuccess {
+		if res.Rcode == dns.RcodeSuccess && s.recordsCache != nil {
 			log.WithFields(logrus.Fields{
 				"op":       "update_cache",
 				"domain":   req.Question[0].Name,
